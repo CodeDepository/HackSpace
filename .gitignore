@@ -70,3 +70,6 @@ testem.log
 Thumbs.db
 HackSpace/
 HackSpace/
+node_modules/ 
+www/ 
+.DS_Store 
