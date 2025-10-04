@@ -1,0 +1,43 @@
+ion-content.map-content { position: relative; --padding: 0; }
+
+.map-root { position: absolute; inset: 0; z-index: 0; }
+.leaflet-container { background: #f6f8fb; }
+
+/* Centered landing search */
+.center-search {
+  position: absolute; inset: 0; display: grid; place-items: center; z-index: 1000;
+}
+.search-form {
+  display: flex; align-items: center; gap: 8px;
+  background: #fff; border-radius: 999px; padding: 8px 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.12);
+  width: min(680px, 90vw);
+}
+.search-form.slim { box-shadow: 0 4px 18px rgba(0,0,0,.10); }
+.search-input::part(native) { padding-inline: 14px; }
+.search-btn { border-radius: 999px; }
+
+.hint { margin-top: 10px; text-align: center; color: #64748b; font-size: 0.9rem; }
+
+/* Compact search pinned to top in results view */
+.top-search {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 1000; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.chip { --background: #eef2ff; }
+
+/* Accordion container */
+.results {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  width: min(720px, 92vw); z-index: 1000;
+}
+
+.card {
+  background: #fff; border-radius: 14px; padding: 12px 14px; margin: 8px 0 14px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.08);
+}
+.card.small { font-size: .9rem; color: #475569; }
+
+.row { display: flex; justify-content: space-between; padding: 6px 2px; }
+.mt8 { margin-top: 8px; }
+.notes { margin: 0; padding-left: 18px; }

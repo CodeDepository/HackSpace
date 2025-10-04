@@ -1,0 +1,72 @@
+<ion-header collapse="condense">
+  <ion-toolbar>
+    <ion-title>Rain Parade</ion-title>
+    <ion-buttons slot="end">
+      <ion-button fill="clear" (click)="resetAll()">Reset</ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true" class="map-content">
+  <!-- full-bleed map -->
+  <div id="map" class="map-root" aria-label="Map"></div>
+
+  <!-- Centered search (Landing) -->
+  <div class="center-search" *ngIf="uiState==='landing'">
+    <form (ngSubmit)="submitSearch()" class="search-form">
+      <ion-input
+        class="search-input"
+        [(ngModel)]="searchDraft"
+        name="searchDraft"
+        autocomplete="off"
+        placeholder='Ask: "week of May 12", "June–July", "next 2 weeks"'
+      ></ion-input>
+      <ion-button type="submit" class="search-btn">Search</ion-button>
+    </form>
+    <div class="hint">Then tap the map to choose a location.</div>
+  </div>
+
+  <!-- Compact search (Results view) -->
+  <div class="top-search" *ngIf="uiState==='results'">
+    <form (ngSubmit)="submitSearch()" class="search-form slim">
+      <ion-input class="search-input" [(ngModel)]="searchDraft" name="searchDraft"
+        placeholder="Change time…"></ion-input>
+      <ion-button type="submit" class="search-btn">Go</ion-button>
+    </form>
+    <ion-chip *ngIf="lastLabel" class="chip">{{ lastLabel }}</ion-chip>
+  </div>
+
+  <!-- Results accordion -->
+  <div class="results" *ngIf="uiState==='results'">
+    <ion-accordion-group expand="inset">
+      <ion-accordion value="summary" [disabled]="!prob">
+        <ion-item slot="header"><ion-label>Probability Summary</ion-label></ion-item>
+        <div slot="content" class="card">
+          <div class="row"><b>Wet-day chance</b><span>{{ prob?.wetPct ?? '—' }}%</span></div>
+          <div class="row"><b>Snow chance</b><span>{{ prob?.snowPct ?? '—' }}%</span></div>
+          <div class="mt8">
+            <ul class="notes">
+              <li *ngFor="let n of prob?.notes">{{ n }}</li>
+            </ul>
+          </div>
+        </div>
+      </ion-accordion>
+
+      <ion-accordion value="conditions" [disabled]="!comfort">
+        <ion-item slot="header"><ion-label>Typical Conditions</ion-label></ion-item>
+        <div slot="content" class="card">
+          <div class="row"><b>Temp</b><span>{{ comfort?.tAvg }}°C ({{ comfort?.tLabel }})</span></div>
+          <div class="row"><b>Wind</b><span>{{ comfort?.wAvg }} m/s ({{ comfort?.wLabel }})</span></div>
+        </div>
+      </ion-accordion>
+
+      <ion-accordion value="about">
+        <ion-item slot="header"><ion-label>About the data</ion-label></ion-item>
+        <div slot="content" class="card small">
+          Powered by NASA POWER daily climatology (PRECTOTCORR, T2M, WS10M). Estimates,
+          not date-level forecasts.
+        </div>
+      </ion-accordion>
+    </ion-accordion-group>
+  </div>
+</ion-content>
