@@ -30,7 +30,7 @@ import { DotGridComponent } from 'src/app/components/dot-grid/dot-grid.component
   <div class="hero-fore">
     <div class="glass-box">
       <div class="brand">NASA SPACE APPS</div>
-      <h1 class="title">DRY SOCK</h1>
+      <h1 class="title">DRY SOCKS</h1>
       <p class="subtitle">
         Will It Rain On My Parade ?
       </p>
