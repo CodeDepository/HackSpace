@@ -8,7 +8,7 @@
 </ion-header>
 
 <ion-content [fullscreen]="true" class="map-content">
-  <!-- full-bleed map -->
+  <!-- Full-bleed map -->
   <div id="map" class="map-root" aria-label="Map"></div>
 
   <!-- Centered search (Landing) -->
@@ -21,52 +21,125 @@
         autocomplete="off"
         placeholder='Ask: "week of May 12", "June–July", "next 2 weeks"'
       ></ion-input>
+
+      <!-- Calendar trigger (date or date-range) -->
+      <ion-datetime-button datetime="planner" class="date-btn"></ion-datetime-button>
       <ion-button type="submit" class="search-btn">Search</ion-button>
     </form>
+
+    <!-- Calendar modal -->
+    <ion-modal [keepContentsMounted]="true">
+      <ion-datetime
+        id="planner"
+        presentation="date-range"
+        [firstDayOfWeek]="1"
+        show-default-buttons="true"
+        prefer-wheel="false"
+        (ionChange)="onDatePicked($event)">
+      </ion-datetime>
+    </ion-modal>
+
     <div class="hint">Then tap the map to choose a location.</div>
   </div>
 
-  <!-- Compact search (Results view) -->
+  <!-- Compact search (Results) -->
   <div class="top-search" *ngIf="uiState==='results'">
     <form (ngSubmit)="submitSearch()" class="search-form slim">
-      <ion-input class="search-input" [(ngModel)]="searchDraft" name="searchDraft"
-        placeholder="Change time…"></ion-input>
+      <ion-input
+        class="search-input"
+        [(ngModel)]="searchDraft"
+        name="searchDraftResults"
+        placeholder="Change time…"
+      ></ion-input>
       <ion-button type="submit" class="search-btn">Go</ion-button>
     </form>
     <ion-chip *ngIf="lastLabel" class="chip">{{ lastLabel }}</ion-chip>
   </div>
 
-  <!-- Results accordion -->
-  <div class="results" *ngIf="uiState==='results'">
-    <ion-accordion-group expand="inset">
-      <ion-accordion value="summary" [disabled]="!prob">
-        <ion-item slot="header"><ion-label>Probability Summary</ion-label></ion-item>
-        <div slot="content" class="card">
-          <div class="row"><b>Wet-day chance</b><span>{{ prob?.wetPct ?? '—' }}%</span></div>
-          <div class="row"><b>Snow chance</b><span>{{ prob?.snowPct ?? '—' }}%</span></div>
-          <div class="mt8">
-            <ul class="notes">
-              <li *ngFor="let n of prob?.notes">{{ n }}</li>
-            </ul>
-          </div>
-        </div>
-      </ion-accordion>
 
-      <ion-accordion value="conditions" [disabled]="!comfort">
-        <ion-item slot="header"><ion-label>Typical Conditions</ion-label></ion-item>
-        <div slot="content" class="card">
-          <div class="row"><b>Temp</b><span>{{ comfort?.tAvg }}°C ({{ comfort?.tLabel }})</span></div>
-          <div class="row"><b>Wind</b><span>{{ comfort?.wAvg }} m/s ({{ comfort?.wLabel }})</span></div>
-        </div>
-      </ion-accordion>
 
-      <ion-accordion value="about">
-        <ion-item slot="header"><ion-label>About the data</ion-label></ion-item>
-        <div slot="content" class="card small">
-          Powered by NASA POWER daily climatology (PRECTOTCORR, T2M, WS10M). Estimates,
-          not date-level forecasts.
-        </div>
-      </ion-accordion>
-    </ion-accordion-group>
+  <!-- Results dock -->
+  <div class="results" *ngIf="prob">
+    <div class="results-head">
+      <div class="title">Summary</div>
+      <div class="sub">{{ lastLabel }}</div>
+    </div>
+
+    <div class="tiles">
+      <div class="tile">
+        <div class="tile-icon rain"></div>
+        <div class="tile-label">Wet-day chance</div>
+        <div class="tile-value">{{ prob.wetPct }}%</div>
+        <div class="tile-note">Wet day = precip &gt; 1 mm</div>
+      </div>
+
+      <div class="tile">
+        <div class="tile-icon snow"></div>
+        <div class="tile-label">Snow chance</div>
+        <div class="tile-value">{{ prob.snowPct }}%</div>
+        <div class="tile-note">Climo across selected months</div>
+      </div>
+
+      <div class="tile" *ngIf="comfort">
+        <div class="tile-icon temp"></div>
+        <div class="tile-label">Temperature</div>
+        <div class="tile-value">{{ comfort.tAvg }}°C</div>
+        <div class="tile-note">{{ comfort.tLabel }}</div>
+      </div>
+
+      <div class="tile" *ngIf="comfort">
+        <div class="tile-icon wind"></div>
+        <div class="tile-label">Wind</div>
+        <div class="tile-value">{{ comfort.wAvg }} m/s</div>
+        <div class="tile-note">{{ comfort.wLabel }}</div>
+      </div>
+    </div>
+
+    <div class="hints" *ngIf="prob?.notes?.length">
+      <div class="hint" *ngFor="let n of prob.notes">
+        <span class="hint-icon"></span>
+        <span class="hint-text">{{ n }}</span>
+      </div>
+    </div>
+
+    <div class="foot-row">
+      <div class="left">
+        <span class="badge nasa">NASA POWER</span>
+        <span class="foot-text">Climatology estimate, not a date-level forecast.</span>
+      </div>
+      <div class="actions" *ngIf="intentRange">
+        <ion-button size="small" (click)="addToCalendar()">Add to Calendar (.ics)</ion-button>
+        <ion-button size="small" fill="outline" (click)="openGoogleCalendar()">Open in Google Calendar</ion-button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map tools (ALWAYS visible, not inside results) -->
+  <div class="map-tools">
+    <ion-button size="small" (click)="toggleRecent()">
+      {{ firesRecentOn ? 'Hide' : 'Show' }} 7-day Hotspots
+    </ion-button>
+    <!-- <ion-button size="small" (click)="toggleHistoric()">
+      {{ firesHistoricOn ? 'Hide' : 'Show' }} Historic Perimeters
+    </ion-button> -->
+
+    <!-- Optional FIRMS time window (only if you enabled FIRMS in TS) -->
+    <ion-datetime-button datetime="firmsRange" class="date-btn"></ion-datetime-button>
+    <ion-modal [keepContentsMounted]="true">
+      <ion-datetime
+        id="firmsRange"
+        presentation="date-range"
+        [firstDayOfWeek]="1"
+        show-default-buttons="true"
+        (ionChange)="onFirmsDatePicked($event)">
+      </ion-datetime>
+    </ion-modal>
+  </div>
+
+  <!-- Legend -->
+  <div class="fire-legend">
+    <div class="dot recent"></div><div class="txt">Hotspots (last 7 days)</div>
+    <!-- <div class="chip-sep"></div> -->
+    <!-- <div class="chip hist"></div><div class="txt">Historic perimeters</div> -->
   </div>
 </ion-content>

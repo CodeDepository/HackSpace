@@ -1,189 +1,183 @@
 import { Injectable } from '@angular/core';
 import * as chrono from 'chrono-node';
 
-export type TimeWindow = 'day'|'week'|'month';
-export interface TimeIntent {
-  window: TimeWindow;
-  months: number[];         // 1..12
-  day?: string;             // 'YYYYMMDD' when window === 'day'
-  label: string;            // human-readable summary for UI
+export type WindowKind = 'day'|'week'|'month';
+export interface IntentResult {
+  window: WindowKind;
+  // for your existing code:
+  months: number[];            // used when window === 'month' (keep filled for labels)
+  start?: Date; end?: Date;    // for day/week windows
+  label: string;
 }
-
-const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
 
 @Injectable({ providedIn: 'root' })
 export class IntentParserService {
+  // Choose week start: 1 = Monday, 0 = Sunday
+  private weekStartsOn: 0|1 = 1;
 
-  parse(text: string, now = new Date()): TimeIntent | null {
-    const q = text.trim().toLowerCase();
+  parse(input: string): IntentResult | null {
+    const q = (input || '').trim().toLowerCase();
+    if (!q) return null;
 
-    // 1) Fast paths for relative phrases
-    const rel = this.tryRelative(q, now);
-    if (rel) return rel;
-
-    // 2) Month ranges like "june-july", "jun–sep", "Q3"
-    const mr = this.tryMonthRange(q);
-    if (mr) return mr;
-
-    // 3) "week of May 12", specific dates, "between May 12 and May 20"
-    const dayOrWeek = this.tryChrono(q, now);
-    if (dayOrWeek) return dayOrWeek;
-
-    // 4) Single month like "June"
-    const singleMonth = this.trySingleMonth(q);
-    if (singleMonth) return singleMonth;
-
-    return null;
-  }
-
-  // ----- helpers -----
-
-  private tryRelative(q: string, now: Date): TimeIntent | null {
-    // next/this week
-    if (/\b(this|current)\s+week\b/.test(q)) {
-      return this.weekFromDate(now, 'This week');
-    }
-    if (/\bnext\s+week\b/.test(q)) {
-      const d = new Date(now);
-      d.setDate(d.getDate() + 7);
-      return this.weekFromDate(d, 'Next week');
-    }
-    // today / tomorrow
-    if (/\b(today)\b/.test(q)) return this.dayIntent(now, 'Today');
-    if (/\b(tomorrow)\b/.test(q)) {
-      const d = new Date(now); d.setDate(d.getDate()+1);
-      return this.dayIntent(d, 'Tomorrow');
-    }
-    // "next 2 weeks", "next 3 months"
-    const m = q.match(/\bnext\s+(\d{1,2})\s+(week|weeks|month|months)\b/);
-    if (m) {
-      const n = Number(m[1]);
-      const unit = m[2].startsWith('week') ? 'week' : 'month';
-      if (unit === 'week') {
-        // treat as 'week' window starting now (we’ll compute with months that overlap)
-        return { window: 'week', months: this.monthsForRange(now, n*7), label: `Next ${n} week(s)` };
+    // 1) Relative week phrases ------------------------------------------------
+    // "last week", "this week", "next week", "last 2 weeks"
+    const relWeek = q.match(/^last\s+(\d+)\s+weeks?$/) || q.match(/^(last|this|next)\s+week$/);
+    if (relWeek) {
+      if (relWeek[1] && /\d+/.test(relWeek[1])) {
+        const n = Math.max(1, parseInt(relWeek[1], 10));
+        const { start, end } = this.rangeForLastNWeeks(n, new Date());
+        return this.resultWeek(start, end, `${n} week${n>1?'s':''} back`);
       } else {
-        return { window: 'month', months: this.monthsForRange(now, n*30), label: `Next ${n} month(s)` };
+        const phrase = relWeek[1] as 'last'|'this'|'next';
+        const { start, end } = this.rangeForRelativeWeek(phrase, new Date());
+        return this.resultWeek(start, end, this.prettyLabelForWeek(start, end, phrase));
       }
     }
-    // "this month" / "next month"
-    if (/\b(this|current)\s+month\b/.test(q)) {
-      const m1 = now.getMonth()+1;
-      return { window: 'month', months: [m1], label: 'This month' };
-    }
-    if (/\bnext\s+month\b/.test(q)) {
-      const m2 = ((now.getMonth()+1) % 12) + 1;
-      return { window: 'month', months: [m2], label: 'Next month' };
-    }
-    // "this weekend" (Sat-Sun of this week → treat as 'day' but we’ll compute week-level)
-    if (/\bthis\s+weekend\b/.test(q)) {
-      const d = new Date(now);
-      const day = d.getDay(); // 0 Sun..6 Sat
-      const sat = new Date(d); sat.setDate(d.getDate() + ((6 - day + 7) % 7));
-      return this.weekFromDate(sat, 'This weekend'); // using week window is simpler for stats
-    }
-    return null;
-  }
 
-  private tryMonthRange(q: string): TimeIntent | null {
-    // Q1/Q2/Q3/Q4
-    const qx = q.match(/\bq([1-4])\b/);
-    if (qx) {
-      const qn = Number(qx[1]);
-      const ranges = {1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
-      return { window: 'month', months: ranges[qn as 1|2|3|4], label: `Q${qn}` };
-    }
-    // "jun-sep", "june–july"
-    const m = q.match(/\b([a-z]{3,})\s*[–-]\s*([a-z]{3,})\b/);
-    if (m) {
-      const a = this.monthNumber(m[1]); const b = this.monthNumber(m[2]);
-      if (a && b) {
-        const months = this.spanMonths(a, b);
-        return { window: 'month', months, label: `${this.name(a)}–${this.name(b)}` };
+    // 2) "week of <date>" ----------------------------------------------------
+    // e.g., "week of Sep 27", "week of 2025-05-12"
+    const weekOf = q.match(/week\s+of\s+(.+)/);
+    if (weekOf) {
+      const ref = this.safeParseDate(weekOf[1]);
+      if (ref) {
+        const { start, end } = this.weekBounds(ref);
+        return this.resultWeek(start, end, this.prettyLabelForWeek(start, end, 'week of'));
       }
     }
-    return null;
-  }
 
-  private trySingleMonth(q: string): TimeIntent | null {
-    for (let i=0;i<12;i++) {
-      const name = MONTHS[i];
-      if (new RegExp(`\\b${name}`).test(q)) {
-        return { window: 'month', months: [i+1], label: this.name(i+1) };
-      }
-    }
-    return null;
-  }
+    // 3) Explicit day / range via chrono ------------------------------------
+    // Supports: "May 12", "May 12–18", "next 2 weeks" (handled above),
+    // "June", "June–July"
+    const parsed = chrono.parse(q, new Date(), { forwardDate: false });
+    if (parsed?.length) {
+      const p = parsed[0];
+      const start = p.start?.date();
+      const end = p.end?.date();
 
-  private tryChrono(q: string, now: Date): TimeIntent | null {
-    // week of <date> → week window
-    if (/\bweek of\b/.test(q)) {
-      const parsed = chrono.parse(q, now);
-      if (parsed.length) {
-        const d = parsed[0].start?.date();
-        if (d) return this.weekFromDate(d, `Week of ${d.toDateString()}`);
+      // month(s)
+      if (this.looksLikeMonthQuery(q)) {
+        const months = this.extractMonthsFromChrono(parsed);
+        const label = this.labelForMonths(months);
+        return { window: 'month', months, label };
       }
-    }
-    // explicit date or date range
-    const results = chrono.parse(q, now);
-    if (results.length) {
-      const r = results[0];
-      if (r.start && !r.end) {
-        // single date → 'day'
-        return this.dayIntent(r.start.date(), r.text);
-      }
-      if (r.start && r.end) {
-        // date range → choose 'week' if ≤14d, else month(s)
-        const start = r.start.date(), end = r.end.date();
-        const ms = Math.max(1, Math.round((end.getTime()-start.getTime())/86400000));
-        if (ms <= 14) {
-          return { window: 'week', months: this.monthsForExplicitRange(start, end), label: r.text };
-        } else {
-          return { window: 'month', months: this.monthsForExplicitRange(start, end), label: r.text };
+
+      // day or range
+      if (start && end) {
+        // If range is 7 days-ish, treat as week
+        const days = Math.round((+end - +start) / 86400000) + 1;
+        if (days >= 6 && days <= 9) {
+          const { start: ws, end: we } = this.weekBounds(start);
+          return this.resultWeek(ws, we, this.prettyLabelForWeek(ws, we, 'range'));
         }
+        const label = days > 1
+          ? `${start.toDateString()} – ${end.toDateString()}`
+          : start.toDateString();
+        return { window: 'day', months: [start.getMonth()+1], start, end, label };
+      }
+
+      if (start) {
+        // single day
+        const label = start.toDateString();
+        return { window: 'day', months: [start.getMonth()+1], start, end: start, label };
       }
     }
+
+    // 4) Fallback: maybe they typed just a month name
+    const tryMonths = this.extractMonthsByRegex(q);
+    if (tryMonths.length) {
+      const label = this.labelForMonths(tryMonths);
+      return { window: 'month', months: tryMonths, label };
+    }
+
     return null;
   }
 
-  // ----- tiny utils -----
-  private dayIntent(d: Date, label: string): TimeIntent {
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth()+1).padStart(2,'0');
-    const day = String(d.getUTCDate()).padStart(2,'0');
-    return { window: 'day', months: [Number(m)], day: `${y}${m}${day}`, label };
+  // ---------------- helpers ----------------
+
+  private weekBounds(d: Date) {
+    const dt = new Date(d); dt.setHours(0,0,0,0);
+    const day = dt.getDay(); // 0 Sun..6 Sat
+    const diff = this.weekStartsOn === 1
+      ? (day === 0 ? -6 : 1 - day)     // Monday start
+      : -day;                           // Sunday start
+    const start = new Date(dt);
+    start.setDate(dt.getDate() + diff);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return { start, end };
   }
 
-  private weekFromDate(d: Date, label: string): TimeIntent {
-    return { window: 'week', months: this.monthsForRange(d, 7), label };
+  private rangeForRelativeWeek(kind: 'last'|'this'|'next', now: Date) {
+    const { start } = this.weekBounds(now);
+    const s = new Date(start);
+    if (kind === 'last') s.setDate(s.getDate() - 7);
+    if (kind === 'next') s.setDate(s.getDate() + 7);
+    const e = new Date(s); e.setDate(s.getDate() + 6);
+    return { start: s, end: e };
   }
 
-  private monthsForRange(start: Date, days: number): number[] {
-    const end = new Date(start); end.setDate(end.getDate()+days);
-    return this.monthsForExplicitRange(start, end);
+  private rangeForLastNWeeks(n: number, now: Date) {
+    // n=1 ⇒ last week; n=2 ⇒ last two weeks (contiguous block ending yesterday-week)
+    const { start: thisW } = this.weekBounds(now);
+    const end = new Date(thisW); end.setDate(end.getDate() - 1); // end is last week's Sunday
+    const start = new Date(end); start.setDate(end.getDate() - (n*7 - 1));
+    // Snap to week boundaries for clean labels
+    const b = this.weekBounds(end);
+    return { start: this.weekBounds(start).start, end: b.end };
   }
 
-  private monthsForExplicitRange(a: Date, b: Date): number[] {
-    const out = new Set<number>();
-    const s = new Date(Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), 1));
-    const e = new Date(Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), 1));
-    while (s <= e) {
-      out.add(s.getUTCMonth()+1);
-      s.setUTCMonth(s.getUTCMonth()+1);
+  private prettyLabelForWeek(start: Date, end: Date, suffix: string) {
+    const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const year = start.getFullYear() === end.getFullYear() ? start.getFullYear() : `${start.getFullYear()}–${end.getFullYear()}`;
+    return `${fmt(start)}–${fmt(end)}, ${year}`;
+  }
+
+  private resultWeek(start: Date, end: Date, label: string): IntentResult {
+    // keep months filled so your existing UI shows month tags if needed
+    const uniqMonths = new Set<number>();
+    const cur = new Date(start);
+    while (cur <= end) { uniqMonths.add(cur.getMonth()+1); cur.setDate(cur.getDate()+1); }
+    return { window: 'week', months: [...uniqMonths], start, end, label };
+  }
+
+  private looksLikeMonthQuery(q: string) {
+    return /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b/i.test(q);
+  }
+
+  private extractMonthsFromChrono(parsed: chrono.ParsedResult[]) {
+    const months = new Set<number>();
+    parsed.forEach(p => {
+      if (p.start) months.add((p.start.get('month') ?? (p.start.date().getMonth()+1)));
+      if (p.end) months.add((p.end.get('month') ?? (p.end.date().getMonth()+1)));
+    });
+    return [...months].sort((a,b)=>a-b);
+  }
+
+  private extractMonthsByRegex(q: string) {
+    const map: Record<string, number> = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12 };
+    const found = new Set<number>();
+    Object.keys(map).forEach(k => { if (q.includes(k)) found.add(map[k]); });
+    return [...found].sort((a,b)=>a-b);
+  }
+
+  private labelForMonths(months: number[]): string {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (months.length === 0) return '';
+    if (months.length === 1) return monthNames[months[0] - 1];
+    
+    // For multiple months, show range or list
+    if (months.length === 2 && months[1] === months[0] + 1) {
+      return `${monthNames[months[0] - 1]}–${monthNames[months[1] - 1]}`;
     }
-    return Array.from(out.values());
+    
+    // For non-consecutive months or more than 2, show as list
+    return months.map(m => monthNames[m - 1]).join(', ');
   }
 
-  private monthNumber(tok: string): number | null {
-    const i = MONTHS.findIndex(m => tok.startsWith(m));
-    return i>=0 ? i+1 : null;
+  private safeParseDate(fragment: string): Date | null {
+    const r = chrono.parse(fragment, new Date(), { forwardDate: true });
+    if (r?.length && r[0].start) return r[0].start.date();
+    return null;
   }
-  private spanMonths(a:number, b:number): number[] {
-    const res: number[] = [];
-    for (let m=a; ; m = m % 12 + 1) {
-      res.push(m); if (m===b) break;
-    }
-    return res;
-  }
-  private name(n:number){ return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][n-1]; }
 }
